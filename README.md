@@ -1,7 +1,9 @@
 # SCHOOL
 
 > **SCHOOL:** ZS SOKOLNICE
+> 
 > **CURRENT PROJECT:** NULL
+> 
 > **DUE DATE:** 0-00-2025
 
 ---
