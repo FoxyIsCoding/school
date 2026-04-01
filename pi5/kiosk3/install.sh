@@ -42,7 +42,11 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # Check if running on Raspberry Pi
-if ! grep -q "Raspberry Pi" /proc/cpuinfo; then
+IS_RASPBERRY_PI=false
+if grep -q "Raspberry Pi" /proc/cpuinfo; then
+    IS_RASPBERRY_PI=true
+    log "Detected Raspberry Pi hardware"
+else
     warn "This script is optimized for Raspberry Pi but will attempt to continue"
 fi
 
@@ -101,14 +105,34 @@ REQUIRED_PACKAGES=(
 )
 
 # Optional packages that might not be available on all systems
-OPTIONAL_PACKAGES=(
-    "libgl1-mesa-glx"
-    "libgl1-mesa-dri"
-    "libxkbcommon-x11-0"
-    "libxkbcommon0"
-    "libegl1-mesa"
-    "libgles2-mesa"
-)
+# Using Raspberry Pi specific packages when detected
+if [ "$IS_RASPBERRY_PI" = true ]; then
+    log "Using Raspberry Pi optimized package list"
+    OPTIONAL_PACKAGES=(
+        "libgl1"                    # Modern OpenGL library
+        "libgl1-mesa-dri"          # Mesa DRI drivers
+        "libegl1-mesa"             # EGL library
+        "libgles2-mesa"            # OpenGL ES library  
+        "libxkbcommon-x11-0"       # X11 keyboard handling
+        "libxkbcommon0"            # Keyboard handling
+        "libdrm2"                  # Direct Rendering Manager
+        "mesa-utils"               # OpenGL utilities
+        "libraspberrypi0"          # Raspberry Pi GPU libraries
+        "libraspberrypi-dev"       # Raspberry Pi development files
+    )
+else
+    log "Using generic Linux package list"
+    OPTIONAL_PACKAGES=(
+        "libgl1"                   # Modern OpenGL library
+        "libgl1-mesa-dri"         # Mesa DRI drivers
+        "libegl1-mesa"            # EGL library
+        "libgles2-mesa"           # OpenGL ES library
+        "libxkbcommon-x11-0"      # X11 keyboard handling
+        "libxkbcommon0"           # Keyboard handling
+        "libdrm2"                 # Direct Rendering Manager
+        "mesa-utils"              # OpenGL utilities
+    )
+fi
 
 # Install required packages first
 for package in "${REQUIRED_PACKAGES[@]}"; do
@@ -121,10 +145,15 @@ for package in "${REQUIRED_PACKAGES[@]}"; do
 done
 
 # Install optional packages (don't fail if they're missing)
+log "Installing optional packages for better graphics support..."
 for package in "${OPTIONAL_PACKAGES[@]}"; do
     if apt-cache show "$package" >/dev/null 2>&1; then
         log "Installing optional package: $package"
-        apt-get install -y "$package" || warn "Failed to install optional package: $package"
+        if apt-get install -y "$package" 2>/dev/null; then
+            log "Successfully installed: $package"
+        else
+            warn "Failed to install optional package: $package (continuing anyway)"
+        fi
     else
         info "Optional package not available (skipping): $package"
     fi
