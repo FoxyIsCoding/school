@@ -119,13 +119,17 @@ class KioskScheduler:
                 "/home/pi/kiosk3/webview-app-simple.py",
             ]
 
+            python_cmd = "/home/pi/kiosk3/python-wrapper.sh"
+            if not os.path.exists(python_cmd):
+                python_cmd = "python3"
+
             for script in webview_scripts:
                 if os.path.exists(script):
                     logger.info(f"Starting WebView application: {script}")
                     try:
                         self.webview_process = subprocess.Popen(
-                            ["python3", script],
-                            env={"DISPLAY": ":0"},
+                            [python_cmd, script],
+                            env={"DISPLAY": ":0", "HOME": "/home/pi"},
                             stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE,
                         )
@@ -142,6 +146,10 @@ class KioskScheduler:
                                 f"WebView application failed to start: {script}"
                             )
                             continue
+
+                    except Exception as e:
+                        logger.warn(f"Failed to start {script}: {e}")
+                        continue
 
                     except Exception as e:
                         logger.warn(f"Failed to start {script}: {e}")

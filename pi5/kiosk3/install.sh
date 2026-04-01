@@ -127,47 +127,10 @@ if [ -n "$CHROMIUM_PKG" ]; then
     apt-get install -y "$CHROMIUM_PKG" || warn "Failed to install $CHROMIUM_PKG"
 fi
 
-# Install Python packages
-log "Installing Python packages..."
+# Install Python packages using virtual environment
+log "Setting up Python virtual environment..."
 
-# Check if we're in an externally managed environment (PEP 668)
-if python3 -m pip install --help | grep -q "break-system-packages"; then
-    log "Detected externally managed Python environment"
-    
-    # Try system packages first, then pip with break-system-packages if needed
-    PYQT5_INSTALLED=false
-    
-    # Check if system PyQt5 packages are sufficient
-    if python3 -c "import PyQt5.QtWebEngineWidgets" 2>/dev/null; then
-        log "PyQt5 WebEngine already available via system packages"
-        PYQT5_INSTALLED=true
-    elif apt-cache show python3-pyqt5.qtwebengine >/dev/null 2>&1; then
-        log "Installing PyQt5 via system packages..."
-        apt-get install -y python3-pyqt5.qtwebengine python3-pyqt5.qtwidgets python3-pyqt5.qtcore python3-pyqt5.qtgui
-        PYQT5_INSTALLED=true
-    fi
-    
-    # If system packages failed, use pip with break-system-packages
-    if [ "$PYQT5_INSTALLED" = false ]; then
-        warn "System PyQt5 packages not available, using pip with --break-system-packages"
-        warn "This is needed for the kiosk system service to work properly"
-        
-        # Upgrade pip
-        python3 -m pip install --upgrade pip --break-system-packages 2>/dev/null || warn "Failed to upgrade pip"
-        
-        # Install PyQt5 packages
-        python3 -m pip install PyQt5 PyQtWebEngine --break-system-packages || {
-            warn "Failed to install PyQt5 via pip, will rely on Chromium fallback"
-        }
-    fi
-else
-    # Old pip behavior - no PEP 668 restrictions
-    log "Installing PyQt5 via pip (legacy system)"
-    pip3 install --upgrade pip || warn "Failed to upgrade pip"
-    pip3 install PyQt5 PyQtWebEngine || warn "Failed to install PyQt5 via pip"
-fi
-
-# Create kiosk user if doesn't exist
+# Create kiosk user first if doesn't exist (needed for venv)
 if ! id "pi" &>/dev/null; then
     log "Creating pi user for kiosk..."
     useradd -m -s /bin/bash pi
@@ -176,10 +139,39 @@ else
     log "User 'pi' already exists"
 fi
 
-# Create kiosk directory
+# Create kiosk directory and virtual environment
 KIOSK_DIR="/home/pi/kiosk3"
+VENV_DIR="$KIOSK_DIR/venv"
+
 log "Creating kiosk directory: $KIOSK_DIR"
 mkdir -p "$KIOSK_DIR"
+
+# Create virtual environment as the pi user
+log "Creating Python virtual environment at $VENV_DIR"
+sudo -u pi python3 -m venv "$VENV_DIR" || error "Failed to create virtual environment"
+
+# Install Python packages in virtual environment
+log "Installing Python packages in virtual environment..."
+sudo -u pi "$VENV_DIR/bin/pip" install --upgrade pip
+
+# Try to install PyQt5 in virtual environment
+PYQT5_INSTALLED=false
+if sudo -u pi "$VENV_DIR/bin/pip" install PyQt5 PyQtWebEngine; then
+    log "PyQt5 installed successfully in virtual environment"
+    PYQT5_INSTALLED=true
+else
+    warn "Failed to install PyQt5 in virtual environment, will use system packages or Chromium fallback"
+fi
+
+# If virtual environment install failed, check system packages
+if [ "$PYQT5_INSTALLED" = false ]; then
+    log "Checking for system PyQt5 packages as fallback..."
+    if python3 -c "import PyQt5.QtWebEngineWidgets" 2>/dev/null; then
+        log "PyQt5 WebEngine available via system packages"
+    else
+        warn "PyQt5 not available via system packages either, will use Chromium fallback"
+    fi
+fi
 
 # Download kiosk files from GitHub
 log "Downloading kiosk files from GitHub..."
@@ -358,6 +350,23 @@ cat > "$KIOSK_DIR/status.sh" << 'EOF'
 echo "=== School Kiosk Status ==="
 echo "Date: $(date)"
 echo
+echo "Python Environment:"
+if [ -f "/home/pi/kiosk3/venv/bin/python" ]; then
+    echo "Virtual environment: installed"
+    if /home/pi/kiosk3/venv/bin/python -c "import PyQt5.QtWebEngineWidgets" 2>/dev/null; then
+        echo "PyQt5 in venv: available"
+    else
+        echo "PyQt5 in venv: not available"
+    fi
+else
+    echo "Virtual environment: not found"
+fi
+if python3 -c "import PyQt5.QtWebEngineWidgets" 2>/dev/null; then
+    echo "System PyQt5: available"
+else
+    echo "System PyQt5: not available"
+fi
+echo
 echo "Services:"
 systemctl is-active kiosk-scheduler.service || echo "kiosk-scheduler: inactive"
 systemctl is-active kiosk-xserver.service || echo "kiosk-xserver: inactive"
@@ -384,6 +393,7 @@ log "Installation completed successfully!"
 info ""
 info "=== Installation Summary ==="
 info "Kiosk directory: $KIOSK_DIR"
+info "Python virtual environment: $VENV_DIR"
 info "Services installed: kiosk-scheduler, kiosk-xserver"
 info "Log files: /var/log/kiosk-*.log"
 info "Status check: $KIOSK_DIR/status.sh"
