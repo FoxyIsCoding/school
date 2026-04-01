@@ -26,9 +26,9 @@ else
     echo "✓ User 'pi' already exists"
 fi
 
-# Step 2: Run the normal install script (for pi user)
-echo "Running normal kiosk installation for 'pi' user..."
-curl -fsSL https://raw.githubusercontent.com/FoxyIsCoding/school/main/pi5/kiosk3/install.sh | bash
+# Step 2: Run the fast install script (no venv) for pi user
+echo "Running fast kiosk installation for 'pi' user (skipping virtual environment)..."
+curl -fsSL https://raw.githubusercontent.com/FoxyIsCoding/school/main/pi5/kiosk3/install-fast.sh | bash
 
 # Check if installation succeeded
 if [ ! -d "/home/pi/kiosk3" ]; then
