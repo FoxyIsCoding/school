@@ -81,6 +81,9 @@ apt-get install -y \
     python3 \
     python3-pip \
     python3-setuptools \
+    python3-dev \
+    python3-venv \
+    python3-full \
     git \
     curl \
     wget \
@@ -91,21 +94,32 @@ apt-get install -y \
     xinit \
     fonts-liberation \
     fonts-dejavu-core \
-    dbus-x11
+    dbus-x11 \
+    build-essential \
+    libgl1-mesa-glx \
+    libxkbcommon-x11-0
 
-# Try to install PyQt5 packages
-log "Installing PyQt5 packages..."
-if apt-cache show python3-pyqt5 >/dev/null 2>&1; then
-    apt-get install -y python3-pyqt5
-else
-    warn "python3-pyqt5 not available in repositories"
-fi
+# Try to install PyQt5 packages from repositories
+log "Installing PyQt5 system packages..."
+PYQT5_PACKAGES=(
+    "python3-pyqt5"
+    "python3-pyqt5.qtwidgets" 
+    "python3-pyqt5.qtcore"
+    "python3-pyqt5.qtgui"
+    "python3-pyqt5.qtwebengine"
+    "python3-pyqt5-dev"
+    "qtbase5-dev"
+    "qtwebengine5-dev"
+)
 
-if apt-cache show python3-pyqt5.qtwebengine >/dev/null 2>&1; then
-    apt-get install -y python3-pyqt5.qtwebengine
-else
-    warn "python3-pyqt5.qtwebengine not available, will use chromium fallback"
-fi
+for package in "${PYQT5_PACKAGES[@]}"; do
+    if apt-cache show "$package" >/dev/null 2>&1; then
+        log "Installing $package..."
+        apt-get install -y "$package" || warn "Failed to install $package"
+    else
+        info "$package not available in repositories"
+    fi
+done
 
 # Install chromium if available
 if [ -n "$CHROMIUM_PKG" ]; then
@@ -115,8 +129,43 @@ fi
 
 # Install Python packages
 log "Installing Python packages..."
-pip3 install --upgrade pip
-pip3 install PyQt5 PyQtWebEngine
+
+# Check if we're in an externally managed environment (PEP 668)
+if python3 -m pip install --help | grep -q "break-system-packages"; then
+    log "Detected externally managed Python environment"
+    
+    # Try system packages first, then pip with break-system-packages if needed
+    PYQT5_INSTALLED=false
+    
+    # Check if system PyQt5 packages are sufficient
+    if python3 -c "import PyQt5.QtWebEngineWidgets" 2>/dev/null; then
+        log "PyQt5 WebEngine already available via system packages"
+        PYQT5_INSTALLED=true
+    elif apt-cache show python3-pyqt5.qtwebengine >/dev/null 2>&1; then
+        log "Installing PyQt5 via system packages..."
+        apt-get install -y python3-pyqt5.qtwebengine python3-pyqt5.qtwidgets python3-pyqt5.qtcore python3-pyqt5.qtgui
+        PYQT5_INSTALLED=true
+    fi
+    
+    # If system packages failed, use pip with break-system-packages
+    if [ "$PYQT5_INSTALLED" = false ]; then
+        warn "System PyQt5 packages not available, using pip with --break-system-packages"
+        warn "This is needed for the kiosk system service to work properly"
+        
+        # Upgrade pip
+        python3 -m pip install --upgrade pip --break-system-packages 2>/dev/null || warn "Failed to upgrade pip"
+        
+        # Install PyQt5 packages
+        python3 -m pip install PyQt5 PyQtWebEngine --break-system-packages || {
+            warn "Failed to install PyQt5 via pip, will rely on Chromium fallback"
+        }
+    fi
+else
+    # Old pip behavior - no PEP 668 restrictions
+    log "Installing PyQt5 via pip (legacy system)"
+    pip3 install --upgrade pip || warn "Failed to upgrade pip"
+    pip3 install PyQt5 PyQtWebEngine || warn "Failed to install PyQt5 via pip"
+fi
 
 # Create kiosk user if doesn't exist
 if ! id "pi" &>/dev/null; then

@@ -113,13 +113,43 @@ class KioskScheduler:
                 logger.info("WebView already running")
                 return True
 
-            # Start WebView application
-            self.webview_process = subprocess.Popen(
-                ["python3", "/home/pi/kiosk3/webview-app.py"], env={"DISPLAY": ":0"}
-            )
+            # Try the full webview app first, then fallback to simple version
+            webview_scripts = [
+                "/home/pi/kiosk3/webview-app.py",
+                "/home/pi/kiosk3/webview-app-simple.py",
+            ]
 
-            logger.info("WebView application started")
-            return True
+            for script in webview_scripts:
+                if os.path.exists(script):
+                    logger.info(f"Starting WebView application: {script}")
+                    try:
+                        self.webview_process = subprocess.Popen(
+                            ["python3", script],
+                            env={"DISPLAY": ":0"},
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                        )
+
+                        # Wait a moment to see if it starts successfully
+                        time.sleep(2)
+                        if self.webview_process.poll() is None:
+                            logger.info(
+                                f"WebView application started successfully: {script}"
+                            )
+                            return True
+                        else:
+                            logger.warn(
+                                f"WebView application failed to start: {script}"
+                            )
+                            continue
+
+                    except Exception as e:
+                        logger.warn(f"Failed to start {script}: {e}")
+                        continue
+
+            logger.error("All WebView applications failed to start")
+            return False
+
         except Exception as e:
             logger.error(f"Failed to start WebView: {e}")
             return False
