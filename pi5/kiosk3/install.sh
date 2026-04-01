@@ -3,7 +3,7 @@
 # School Kiosk Installation Script
 # Automatically sets up a Raspberry Pi as a school break time kiosk display
 # 
-# Usage: curl -fsSL https://raw.githubusercontent.com/username/kiosk3/main/install.sh | sudo bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/FoxyIsCoding/school/main/pi5/kiosk3/install.sh | sudo bash
 
 set -e  # Exit on any error
 
@@ -51,15 +51,35 @@ log "Installation log: $LOGFILE"
 
 # Update system
 log "Updating system packages..."
-apt-get update && apt-get upgrade -y
+apt-get update
+
+# Upgrade system with held packages handling
+log "Upgrading system (handling held packages)..."
+apt-get upgrade -y || {
+    warn "Some packages were held back during upgrade, continuing..."
+    apt-get dist-upgrade -y || warn "Dist-upgrade also had issues, continuing with installation..."
+}
 
 # Install required packages
 log "Installing required packages..."
+
+# Try to install chromium with fallback options
+log "Detecting available chromium package..."
+if apt-cache show chromium >/dev/null 2>&1; then
+    CHROMIUM_PKG="chromium"
+    log "Found chromium package"
+elif apt-cache show chromium-browser >/dev/null 2>&1; then
+    CHROMIUM_PKG="chromium-browser"
+    log "Found chromium-browser package"
+else
+    warn "No chromium package found, will use PyQt5 WebEngine only"
+    CHROMIUM_PKG=""
+fi
+
+# Install base packages
 apt-get install -y \
     python3 \
     python3-pip \
-    python3-pyqt5 \
-    python3-pyqt5.qtwebengine \
     python3-setuptools \
     git \
     curl \
@@ -69,10 +89,29 @@ apt-get install -y \
     unclutter \
     x11-xserver-utils \
     xinit \
-    chromium-browser \
     fonts-liberation \
     fonts-dejavu-core \
     dbus-x11
+
+# Try to install PyQt5 packages
+log "Installing PyQt5 packages..."
+if apt-cache show python3-pyqt5 >/dev/null 2>&1; then
+    apt-get install -y python3-pyqt5
+else
+    warn "python3-pyqt5 not available in repositories"
+fi
+
+if apt-cache show python3-pyqt5.qtwebengine >/dev/null 2>&1; then
+    apt-get install -y python3-pyqt5.qtwebengine
+else
+    warn "python3-pyqt5.qtwebengine not available, will use chromium fallback"
+fi
+
+# Install chromium if available
+if [ -n "$CHROMIUM_PKG" ]; then
+    log "Installing $CHROMIUM_PKG..."
+    apt-get install -y "$CHROMIUM_PKG" || warn "Failed to install $CHROMIUM_PKG"
+fi
 
 # Install Python packages
 log "Installing Python packages..."
@@ -96,12 +135,13 @@ mkdir -p "$KIOSK_DIR"
 # Download kiosk files from GitHub
 log "Downloading kiosk files from GitHub..."
 cd /tmp
-if [ -d "kiosk3" ]; then
-    rm -rf kiosk3
+if [ -d "school" ]; then
+    rm -rf school
 fi
 
-git clone https://github.com/username/kiosk3.git || error "Failed to clone repository"
-cp -r kiosk3/* "$KIOSK_DIR/"
+git clone https://github.com/FoxyIsCoding/school.git || error "Failed to clone repository"
+cp -r school/pi5/kiosk3/* "$KIOSK_DIR/"
+rm -rf school  # Cleanup
 chown -R pi:pi "$KIOSK_DIR"
 
 # Make scripts executable

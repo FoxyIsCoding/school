@@ -2,15 +2,16 @@
 """
 Kiosk WebView Application
 Full-screen browser for displaying the school website
+Supports both PyQt5 WebEngine and Chromium fallback
 """
 
 import sys
 import os
 import logging
-from PyQt5.QtWidgets import QApplication, QMainWindow
-from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineSettings
-from PyQt5.QtCore import Qt, QUrl, QTimer
-from PyQt5.QtGui import QCursor
+import subprocess
+import signal
+import time
+from pathlib import Path
 
 # Configure logging
 logging.basicConfig(
@@ -27,173 +28,231 @@ logger = logging.getLogger(__name__)
 KIOSK_URL = "https://sokolnice.neocities.org"
 
 
-class KioskWebView(QMainWindow):
+class ChromiumKiosk:
+    """Chromium-based fallback kiosk implementation"""
+
     def __init__(self):
-        super().__init__()
-        self.init_ui()
+        self.process = None
 
-    def init_ui(self):
-        """Initialize the user interface"""
-        # Set up the main window
-        self.setWindowTitle("School Kiosk")
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-
-        # Create WebView
-        self.webview = QWebEngineView()
-        self.setCentralWidget(self.webview)
-
-        # Configure WebEngine settings
-        settings = QWebEngineSettings.globalSettings()
-        settings.setAttribute(QWebEngineSettings.PluginsEnabled, True)
-        settings.setAttribute(QWebEngineSettings.JavascriptEnabled, True)
-        settings.setAttribute(QWebEngineSettings.LocalStorageEnabled, True)
-        settings.setAttribute(QWebEngineSettings.AutoLoadImages, True)
-        settings.setAttribute(QWebEngineSettings.PlaybackRequiresUserGesture, False)
-
-        # Disable features that might interfere with kiosk mode
-        settings.setAttribute(QWebEngineSettings.ShowScrollBars, False)
-
-        # Connect signals
-        self.webview.loadFinished.connect(self.on_load_finished)
-        self.webview.loadStarted.connect(self.on_load_started)
-
-        # Set up auto-refresh timer (refresh every 5 minutes)
-        self.refresh_timer = QTimer()
-        self.refresh_timer.timeout.connect(self.refresh_page)
-        self.refresh_timer.start(5 * 60 * 1000)  # 5 minutes in milliseconds
-
-        # Hide cursor after 10 seconds of inactivity
-        self.cursor_timer = QTimer()
-        self.cursor_timer.timeout.connect(self.hide_cursor)
-        self.cursor_timer.setSingleShot(True)
-
-        # Load the website
-        self.load_website()
-
-        # Go fullscreen
-        self.showFullScreen()
-
-        logger.info("Kiosk WebView initialized")
-
-    def load_website(self):
-        """Load the kiosk website"""
+    def start(self):
+        """Start Chromium in kiosk mode"""
         try:
-            url = QUrl(KIOSK_URL)
-            self.webview.load(url)
-            logger.info(f"Loading website: {KIOSK_URL}")
+            # Find chromium executable
+            chromium_cmd = None
+            for cmd in ["chromium", "chromium-browser", "google-chrome"]:
+                if subprocess.run(["which", cmd], capture_output=True).returncode == 0:
+                    chromium_cmd = cmd
+                    break
+
+            if not chromium_cmd:
+                logger.error("No chromium executable found")
+                return False
+
+            # Chromium kiosk arguments
+            args = [
+                chromium_cmd,
+                "--kiosk",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu-sandbox",
+                "--disable-software-rasterizer",
+                "--disable-background-timer-throttling",
+                "--disable-backgrounding-occluded-windows",
+                "--disable-renderer-backgrounding",
+                "--disable-features=TranslateUI",
+                "--disable-extensions",
+                "--disable-plugins",
+                "--no-first-run",
+                "--disable-infobars",
+                "--disable-session-crashed-bubble",
+                "--disable-restore-session-state",
+                "--autoplay-policy=no-user-gesture-required",
+                "--window-position=0,0",
+                "--start-fullscreen",
+                KIOSK_URL,
+            ]
+
+            logger.info(f"Starting Chromium kiosk: {chromium_cmd}")
+            self.process = subprocess.Popen(
+                args,
+                env={**os.environ, "DISPLAY": ":0"},
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
+            return True
+
         except Exception as e:
-            logger.error(f"Failed to load website: {e}")
+            logger.error(f"Failed to start Chromium: {e}")
+            return False
 
-    def on_load_started(self):
-        """Called when page load starts"""
-        logger.info("Page load started")
+    def stop(self):
+        """Stop Chromium"""
+        if self.process:
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+            except Exception as e:
+                logger.error(f"Error stopping Chromium: {e}")
 
-    def on_load_finished(self, success):
-        """Called when page load finishes"""
-        if success:
-            logger.info("Page loaded successfully")
-        else:
-            logger.error("Page load failed")
-            # Retry after 30 seconds
-            QTimer.singleShot(30000, self.load_website)
+    def is_running(self):
+        """Check if Chromium is running"""
+        return self.process and self.process.poll() is None
 
-    def refresh_page(self):
-        """Refresh the current page"""
-        logger.info("Auto-refreshing page")
-        self.webview.reload()
 
-    def hide_cursor(self):
-        """Hide the mouse cursor"""
-        self.setCursor(QCursor(Qt.BlankCursor))
+class PyQt5Kiosk:
+    """PyQt5 WebEngine kiosk implementation"""
 
-    def mouseMoveEvent(self, event):
-        """Show cursor on mouse movement"""
-        self.setCursor(QCursor(Qt.ArrowCursor))
-        self.cursor_timer.start(10000)  # Hide cursor after 10 seconds
-        super().mouseMoveEvent(event)
+    def __init__(self):
+        self.app = None
+        self.window = None
 
-    def keyPressEvent(self, event):
-        """Handle key press events"""
-        # Disable common key combinations that might exit kiosk mode
-        key = event.key()
-        modifiers = event.modifiers()
+    def start(self):
+        """Start PyQt5 WebEngine kiosk"""
+        try:
+            from PyQt5.QtWidgets import QApplication, QMainWindow
+            from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineSettings
+            from PyQt5.QtCore import Qt, QUrl, QTimer
+            from PyQt5.QtGui import QCursor
 
-        # Allow F5 for refresh
-        if key == Qt.Key_F5:
-            self.refresh_page()
-            return
+            # Set up Qt application
+            self.app = QApplication(sys.argv)
+            self.app.setApplicationName("School Kiosk")
 
-        # Block other potentially problematic keys
-        blocked_keys = [
-            Qt.Key_Escape,
-            Qt.Key_Alt,
-            Qt.Key_Tab,
-            Qt.Key_Meta,  # Windows/Cmd key
-        ]
+            # Create main window
+            self.window = QMainWindow()
+            self.window.setWindowTitle("School Kiosk")
+            self.window.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
 
-        blocked_combinations = [
-            (Qt.ControlModifier, Qt.Key_C),
-            (Qt.ControlModifier, Qt.Key_V),
-            (Qt.ControlModifier, Qt.Key_A),
-            (Qt.ControlModifier, Qt.Key_T),
-            (Qt.ControlModifier, Qt.Key_N),
-            (Qt.ControlModifier, Qt.Key_W),
-            (Qt.ControlModifier, Qt.Key_Q),
-            (Qt.AltModifier, Qt.Key_F4),
-            (Qt.AltModifier, Qt.Key_Tab),
-        ]
+            # Create WebView
+            webview = QWebEngineView()
+            self.window.setCentralWidget(webview)
 
-        # Check if key should be blocked
-        if key in blocked_keys:
-            logger.info(f"Blocked key press: {key}")
-            return
+            # Configure WebEngine settings
+            settings = QWebEngineSettings.globalSettings()
+            settings.setAttribute(QWebEngineSettings.PluginsEnabled, True)
+            settings.setAttribute(QWebEngineSettings.JavascriptEnabled, True)
+            settings.setAttribute(QWebEngineSettings.LocalStorageEnabled, True)
+            settings.setAttribute(QWebEngineSettings.AutoLoadImages, True)
+            settings.setAttribute(QWebEngineSettings.PlaybackRequiresUserGesture, False)
+            settings.setAttribute(QWebEngineSettings.ShowScrollBars, False)
 
-        # Check if key combination should be blocked
-        for mod, blocked_key in blocked_combinations:
-            if modifiers & mod and key == blocked_key:
-                logger.info(f"Blocked key combination: {modifiers} + {key}")
-                return
+            # Load the website
+            webview.load(QUrl(KIOSK_URL))
 
-        # Allow other keys to pass through
-        super().keyPressEvent(event)
+            # Auto-refresh timer (every 5 minutes)
+            refresh_timer = QTimer()
+            refresh_timer.timeout.connect(webview.reload)
+            refresh_timer.start(5 * 60 * 1000)
 
-    def closeEvent(self, event):
-        """Handle application close event"""
-        logger.info("WebView application closing")
-        event.accept()
+            # Show fullscreen
+            self.window.showFullScreen()
+
+            # Hide cursor after 10 seconds
+            cursor_timer = QTimer()
+            cursor_timer.timeout.connect(
+                lambda: self.window.setCursor(QCursor(Qt.BlankCursor))
+            )
+            cursor_timer.setSingleShot(True)
+            cursor_timer.start(10000)
+
+            logger.info("PyQt5 WebEngine kiosk started")
+            return True
+
+        except ImportError as e:
+            logger.error(f"PyQt5 not available: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to start PyQt5 kiosk: {e}")
+            return False
+
+    def run(self):
+        """Run the PyQt5 application"""
+        if self.app:
+            return self.app.exec_()
+        return 1
+
+    def stop(self):
+        """Stop PyQt5 application"""
+        if self.app:
+            self.app.quit()
+
+
+class KioskManager:
+    """Manages kiosk display with fallback options"""
+
+    def __init__(self):
+        self.kiosk = None
+        self.using_pyqt5 = False
+
+    def start(self):
+        """Start kiosk with best available method"""
+        logger.info("Starting kiosk display...")
+
+        # Try PyQt5 first
+        pyqt5_kiosk = PyQt5Kiosk()
+        if pyqt5_kiosk.start():
+            self.kiosk = pyqt5_kiosk
+            self.using_pyqt5 = True
+            logger.info("Using PyQt5 WebEngine")
+            return self.kiosk.run()
+
+        # Fallback to Chromium
+        logger.info("Falling back to Chromium...")
+        chromium_kiosk = ChromiumKiosk()
+        if chromium_kiosk.start():
+            self.kiosk = chromium_kiosk
+            self.using_pyqt5 = False
+            logger.info("Using Chromium kiosk mode")
+
+            # Keep the script running while Chromium is active
+            try:
+                while chromium_kiosk.is_running():
+                    time.sleep(1)
+                return 0
+            except KeyboardInterrupt:
+                logger.info("Received interrupt signal")
+                return 0
+
+        logger.error("No suitable kiosk method available")
+        return 1
+
+    def stop(self):
+        """Stop the kiosk"""
+        if self.kiosk:
+            logger.info("Stopping kiosk display")
+            self.kiosk.stop()
+
+
+def signal_handler(signum, frame):
+    """Handle termination signals"""
+    logger.info(f"Received signal {signum}, shutting down...")
+    if hasattr(signal_handler, "manager"):
+        signal_handler.manager.stop()
+    sys.exit(0)
 
 
 def main():
     """Main application entry point"""
-    # Set up Qt application
-    app = QApplication(sys.argv)
-    app.setApplicationName("School Kiosk")
+    logger.info("Starting kiosk WebView application")
 
-    # Disable Qt's built-in screen saver
-    app.setAttribute(Qt.AA_DisableWindowContextHelpButton, True)
-
-    # Create and show the kiosk window
-    kiosk = KioskWebView()
-
-    # Set up signal handling for graceful shutdown
-    import signal
-
-    def signal_handler(signum, frame):
-        logger.info(f"Received signal {signum}, shutting down...")
-        app.quit()
+    # Set up signal handling
+    manager = KioskManager()
+    signal_handler.manager = manager
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
-    logger.info("Starting kiosk WebView application")
-
-    # Start the application
     try:
-        sys.exit(app.exec_())
+        return manager.start()
     except Exception as e:
         logger.error(f"Application error: {e}")
-        sys.exit(1)
+        return 1
+    finally:
+        manager.stop()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

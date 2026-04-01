@@ -29,7 +29,7 @@ The kiosk activates during these times:
 Run this command on your Raspberry Pi:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/username/kiosk3/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/FoxyIsCoding/school/main/pi5/kiosk3/install.sh | sudo bash
 ```
 
 After installation, reboot the system:
@@ -54,8 +54,8 @@ If you prefer to install manually:
 
 ```bash
 # Clone the repository
-git clone https://github.com/username/kiosk3.git
-cd kiosk3
+git clone https://github.com/FoxyIsCoding/school.git
+cd school/pi5/kiosk3
 
 # Run the install script
 sudo ./install.sh
