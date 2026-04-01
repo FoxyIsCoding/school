@@ -76,28 +76,59 @@ else
     CHROMIUM_PKG=""
 fi
 
-# Install base packages
-apt-get install -y \
-    python3 \
-    python3-pip \
-    python3-setuptools \
-    python3-dev \
-    python3-venv \
-    python3-full \
-    git \
-    curl \
-    wget \
-    xorg \
-    openbox \
-    unclutter \
-    x11-xserver-utils \
-    xinit \
-    fonts-liberation \
-    fonts-dejavu-core \
-    dbus-x11 \
-    build-essential \
-    libgl1-mesa-glx \
-    libxkbcommon-x11-0
+# Install base packages with individual error handling
+log "Installing base packages..."
+
+REQUIRED_PACKAGES=(
+    "python3"
+    "python3-pip" 
+    "python3-setuptools"
+    "python3-dev"
+    "python3-venv"
+    "python3-full"
+    "git"
+    "curl"
+    "wget"
+    "xorg"
+    "openbox"
+    "unclutter"
+    "x11-xserver-utils"
+    "xinit"
+    "fonts-liberation"
+    "fonts-dejavu-core"
+    "dbus-x11"
+    "build-essential"
+)
+
+# Optional packages that might not be available on all systems
+OPTIONAL_PACKAGES=(
+    "libgl1-mesa-glx"
+    "libgl1-mesa-dri"
+    "libxkbcommon-x11-0"
+    "libxkbcommon0"
+    "libegl1-mesa"
+    "libgles2-mesa"
+)
+
+# Install required packages first
+for package in "${REQUIRED_PACKAGES[@]}"; do
+    if apt-cache show "$package" >/dev/null 2>&1; then
+        log "Installing required package: $package"
+        apt-get install -y "$package" || error "Failed to install required package: $package"
+    else
+        error "Required package not available: $package"
+    fi
+done
+
+# Install optional packages (don't fail if they're missing)
+for package in "${OPTIONAL_PACKAGES[@]}"; do
+    if apt-cache show "$package" >/dev/null 2>&1; then
+        log "Installing optional package: $package"
+        apt-get install -y "$package" || warn "Failed to install optional package: $package"
+    else
+        info "Optional package not available (skipping): $package"
+    fi
+done
 
 # Try to install PyQt5 packages from repositories
 log "Installing PyQt5 system packages..."
@@ -108,16 +139,33 @@ PYQT5_PACKAGES=(
     "python3-pyqt5.qtgui"
     "python3-pyqt5.qtwebengine"
     "python3-pyqt5-dev"
-    "qtbase5-dev"
-    "qtwebengine5-dev"
 )
 
+# Optional Qt development packages
+OPTIONAL_QT_PACKAGES=(
+    "qtbase5-dev"
+    "qtwebengine5-dev"
+    "qt5-qmake"
+    "qtbase5-dev-tools"
+)
+
+# Install PyQt5 packages
 for package in "${PYQT5_PACKAGES[@]}"; do
     if apt-cache show "$package" >/dev/null 2>&1; then
-        log "Installing $package..."
-        apt-get install -y "$package" || warn "Failed to install $package"
+        log "Installing PyQt5 package: $package"
+        apt-get install -y "$package" || warn "Failed to install PyQt5 package: $package"
     else
-        info "$package not available in repositories"
+        info "PyQt5 package not available: $package"
+    fi
+done
+
+# Install optional Qt packages
+for package in "${OPTIONAL_QT_PACKAGES[@]}"; do
+    if apt-cache show "$package" >/dev/null 2>&1; then
+        log "Installing Qt package: $package"
+        apt-get install -y "$package" || warn "Failed to install Qt package: $package"
+    else
+        info "Qt package not available (skipping): $package"
     fi
 done
 
@@ -148,29 +196,69 @@ mkdir -p "$KIOSK_DIR"
 
 # Create virtual environment as the pi user
 log "Creating Python virtual environment at $VENV_DIR"
-sudo -u pi python3 -m venv "$VENV_DIR" || error "Failed to create virtual environment"
 
-# Install Python packages in virtual environment
-log "Installing Python packages in virtual environment..."
-sudo -u pi "$VENV_DIR/bin/pip" install --upgrade pip
-
-# Try to install PyQt5 in virtual environment
-PYQT5_INSTALLED=false
-if sudo -u pi "$VENV_DIR/bin/pip" install PyQt5 PyQtWebEngine; then
-    log "PyQt5 installed successfully in virtual environment"
-    PYQT5_INSTALLED=true
-else
-    warn "Failed to install PyQt5 in virtual environment, will use system packages or Chromium fallback"
+# Ensure we have python3-venv
+if ! python3 -m venv --help >/dev/null 2>&1; then
+    warn "python3-venv not properly installed, trying to install..."
+    apt-get install -y python3-venv python3-pip || warn "Failed to install python3-venv"
 fi
 
-# If virtual environment install failed, check system packages
+# Create virtual environment with error handling
+if sudo -u pi python3 -m venv "$VENV_DIR" 2>/dev/null; then
+    log "Virtual environment created successfully"
+else
+    warn "Failed to create virtual environment, will rely on system packages"
+    VENV_DIR=""
+fi
+
+# Install Python packages in virtual environment
+if [ -n "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/pip" ]; then
+    log "Installing Python packages in virtual environment..."
+    
+    # Upgrade pip in venv
+    if sudo -u pi "$VENV_DIR/bin/pip" install --upgrade pip; then
+        log "Pip upgraded in virtual environment"
+    else
+        warn "Failed to upgrade pip in virtual environment"
+    fi
+    
+    # Try to install PyQt5 in virtual environment
+    PYQT5_INSTALLED=false
+    log "Attempting to install PyQt5 in virtual environment..."
+    if sudo -u pi "$VENV_DIR/bin/pip" install PyQt5 PyQtWebEngine 2>/dev/null; then
+        log "PyQt5 installed successfully in virtual environment"
+        PYQT5_INSTALLED=true
+    else
+        warn "Failed to install PyQt5 in virtual environment"
+        # Try installing just PyQt5 without WebEngine
+        if sudo -u pi "$VENV_DIR/bin/pip" install PyQt5 2>/dev/null; then
+            log "PyQt5 (without WebEngine) installed in virtual environment"
+            PYQT5_INSTALLED=true
+        else
+            warn "Failed to install any PyQt5 components in virtual environment"
+        fi
+    fi
+else
+    log "Skipping virtual environment package installation"
+    PYQT5_INSTALLED=false
+fi
+
+# Check system packages as fallback
 if [ "$PYQT5_INSTALLED" = false ]; then
     log "Checking for system PyQt5 packages as fallback..."
     if python3 -c "import PyQt5.QtWebEngineWidgets" 2>/dev/null; then
         log "PyQt5 WebEngine available via system packages"
+        PYQT5_INSTALLED=true
+    elif python3 -c "import PyQt5.QtWidgets" 2>/dev/null; then
+        log "PyQt5 (without WebEngine) available via system packages"
+        PYQT5_INSTALLED=true
     else
-        warn "PyQt5 not available via system packages either, will use Chromium fallback"
+        warn "PyQt5 not available via system packages either"
     fi
+fi
+
+if [ "$PYQT5_INSTALLED" = false ]; then
+    warn "PyQt5 not available through any method - will use Chromium fallback only"
 fi
 
 # Download kiosk files from GitHub
