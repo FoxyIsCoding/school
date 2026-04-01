@@ -105,14 +105,13 @@ REQUIRED_PACKAGES=(
 )
 
 # Optional packages that might not be available on all systems
-# Using Raspberry Pi specific packages when detected
+# Based on actual Raspberry Pi package availability test
 if [ "$IS_RASPBERRY_PI" = true ]; then
-    log "Using Raspberry Pi optimized package list"
+    log "Using Raspberry Pi verified package list"
     OPTIONAL_PACKAGES=(
-        "libgl1"                    # Modern OpenGL library
-        "libgl1-mesa-dri"          # Mesa DRI drivers
-        "libegl1-mesa"             # EGL library
-        "libgles2-mesa"            # OpenGL ES library  
+        "libgl1"                    # Modern OpenGL library - ✓ available
+        "libgl1-mesa-glx"          # Legacy Mesa GLX - ✓ available 
+        "libgl1-mesa-dri"          # Mesa DRI drivers - ✓ available
         "libxkbcommon-x11-0"       # X11 keyboard handling
         "libxkbcommon0"            # Keyboard handling
         "libdrm2"                  # Direct Rendering Manager
@@ -125,8 +124,6 @@ else
     OPTIONAL_PACKAGES=(
         "libgl1"                   # Modern OpenGL library
         "libgl1-mesa-dri"         # Mesa DRI drivers
-        "libegl1-mesa"            # EGL library
-        "libgles2-mesa"           # OpenGL ES library
         "libxkbcommon-x11-0"      # X11 keyboard handling
         "libxkbcommon0"           # Keyboard handling
         "libdrm2"                 # Direct Rendering Manager
@@ -134,30 +131,44 @@ else
     )
 fi
 
-# Install required packages first
-for package in "${REQUIRED_PACKAGES[@]}"; do
-    if apt-cache show "$package" >/dev/null 2>&1; then
-        log "Installing required package: $package"
-        apt-get install -y "$package" || error "Failed to install required package: $package"
-    else
-        error "Required package not available: $package"
-    fi
-done
+# Install required packages first (all confirmed available)
+log "Installing verified core packages..."
+CORE_SUCCESS=true
 
-# Install optional packages (don't fail if they're missing)
-log "Installing optional packages for better graphics support..."
-for package in "${OPTIONAL_PACKAGES[@]}"; do
-    if apt-cache show "$package" >/dev/null 2>&1; then
-        log "Installing optional package: $package"
-        if apt-get install -y "$package" 2>/dev/null; then
-            log "Successfully installed: $package"
-        else
-            warn "Failed to install optional package: $package (continuing anyway)"
-        fi
-    else
-        info "Optional package not available (skipping): $package"
-    fi
-done
+# Install as a single command for efficiency
+if apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-setuptools \
+    python3-dev \
+    python3-venv \
+    python3-full \
+    git \
+    curl \
+    wget \
+    xorg \
+    openbox \
+    unclutter \
+    x11-xserver-utils \
+    xinit \
+    fonts-liberation \
+    fonts-dejavu-core \
+    dbus-x11 \
+    build-essential; then
+    log "Core packages installed successfully"
+else
+    error "Failed to install core packages"
+fi
+
+# Install graphics packages (confirmed available on your Pi)
+log "Installing graphics packages..."
+GRAPHICS_PACKAGES="libgl1 libgl1-mesa-glx libgl1-mesa-dri mesa-utils"
+
+if apt-get install -y $GRAPHICS_PACKAGES; then
+    log "Graphics packages installed successfully"
+else
+    warn "Some graphics packages failed to install, continuing anyway"
+fi
 
 # Try to install PyQt5 packages from repositories
 log "Installing PyQt5 system packages..."
