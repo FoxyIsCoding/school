@@ -1,0 +1,28 @@
+[Unit]
+Description=School Kiosk Scheduler Service
+After=network-online.target graphical.target
+Wants=network-online.target
+Requires=graphical.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/kiosk3
+ExecStart=/usr/bin/python3 /home/pi/kiosk3/kiosk-scheduler.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment variables
+Environment="DISPLAY=:0"
+Environment="HOME=/home/pi"
+Environment="USER=pi"
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,26 @@
+[Unit]
+Description=Kiosk X Server
+After=systemd-user-sessions.service network.target sound.target
+Before=display-manager.service
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/startx /home/pi/kiosk3/start-kiosk.sh -- :0 vt7 -keeptty -verbose 3 -logfile /var/log/Xorg.kiosk.log
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/kiosk3
+
+# Environment
+Environment="HOME=/home/pi"
+Environment="USER=pi"
+
+# Restart settings
+Restart=always
+RestartSec=5
+
+# Output
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
